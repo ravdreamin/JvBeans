@@ -1,0 +1,6 @@
+
+# env
+.env
+*.env
+frontend/.env.local
+Backend/.env
