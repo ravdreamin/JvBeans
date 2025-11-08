@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Nav from "@/components/Nav";
+import { ToastProvider } from "@/components/Toast";
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 
@@ -21,8 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="h-full" suppressHydrationWarning>
       <body className={`${inter.variable} h-full bg-black text-white antialiased`}>
-        <Nav />
-        <main className="min-h-[calc(100dvh-56px)]">{children}</main>
+        <ToastProvider>
+          <Nav />
+          <main className="min-h-[calc(100dvh-56px)]">{children}</main>
+        </ToastProvider>
       </body>
     </html>
   );

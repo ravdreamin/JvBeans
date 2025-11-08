@@ -1,5 +1,13 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import type { Space, Vault, Log, TreeNode, RunResult, GenerateResponse } from "./types";
+
+// UPDATED: Added ApiError type for structured error handling
+export type ApiError = {
+  status: number;
+  code?: string;
+  message: string;
+  provider?: "openai" | "gemini";
+};
 
 // Use environment variables or fallback
 const getApiUrl = () => {
@@ -31,6 +39,20 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// UPDATED: Error interceptor to transform errors into ApiError format
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<any>) => {
+    const apiError: ApiError = {
+      status: error.response?.status || 500,
+      code: error.response?.data?.code || error.code,
+      message: error.response?.data?.message || error.message || "An error occurred",
+      provider: error.response?.data?.provider,
+    };
+    return Promise.reject(apiError);
+  }
+);
 
 // Spaces
 export const getSpaces = async (): Promise<Space[]> => {

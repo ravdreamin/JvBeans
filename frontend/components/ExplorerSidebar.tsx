@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { ChevronRight, ChevronDown, Folder, File, Plus, MoreVertical } from "lucide-react";
-import { createSpace, createVault, createLog, updateVault, deleteVault, updateLog, deleteLog as deleteLogAPI } from "@/lib/api";
+import { createSpace, createVault, createLog, updateVault, deleteVault, updateLog, deleteLog as deleteLogAPI, ApiError } from "@/lib/api";
 import type { Space, TreeNode } from "@/lib/types";
+import InlineNameInput from "./InlineNameInput";
+import { useToast } from "./Toast";
 
 interface ExplorerSidebarProps {
   spaces: Space[];
@@ -13,7 +15,15 @@ interface ExplorerSidebarProps {
   onSelectLog: (logId: string) => void;
   onRefresh: () => void;
   onSpacesChange: () => void;
+  onOpenCommandPalette: () => void;
 }
+
+type InlineMode =
+  | { type: "create-space" }
+  | { type: "create-vault"; parentId?: string }
+  | { type: "create-log"; vaultId: string }
+  | { type: "rename"; node: TreeNode }
+  | null;
 
 export default function ExplorerSidebar({
   spaces,
@@ -23,9 +33,12 @@ export default function ExplorerSidebar({
   onSelectLog,
   onRefresh,
   onSpacesChange,
+  onOpenCommandPalette,
 }: ExplorerSidebarProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: TreeNode | null } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
+  const [inlineMode, setInlineMode] = useState<InlineMode>(null);
+  const { showToast } = useToast();
 
   const toggleExpand = (nodeId: string) => {
     setExpanded((prev) => {
@@ -39,6 +52,101 @@ export default function ExplorerSidebar({
     });
   };
 
+  // Validation
+  const validateSpaceOrVaultName = (name: string): string | null => {
+    if (!/^[A-Za-z0-9 _.-]{1,64}$/.test(name)) {
+      return "Name must be 1-64 characters: letters, numbers, spaces, _, -, .";
+    }
+    return null;
+  };
+
+  const validateLogFilename = (filename: string): string | null => {
+    if (!/\.[a-z0-9]+$/i.test(filename)) {
+      return "Filename must include an extension (e.g., .js, .py)";
+    }
+    if (/[/\\:*?"<>|]/.test(filename)) {
+      return 'Filename cannot contain: / \\ : * ? " < > |';
+    }
+    return null;
+  };
+
+  // CRUD Handlers
+  const handleCreateSpace = async (name: string) => {
+    try {
+      await createSpace(name);
+      showToast("Space created successfully", "success");
+      onSpacesChange();
+      setInlineMode(null);
+    } catch (error) {
+      const err = error as ApiError;
+      showToast(err.message || "Failed to create space", "error");
+      throw error;
+    }
+  };
+
+  const handleCreateVault = async (name: string, parentId?: string) => {
+    if (!selectedSpace) return;
+    try {
+      await createVault(selectedSpace.id, name, parentId);
+      showToast("Vault created successfully", "success");
+      onRefresh();
+      setInlineMode(null);
+    } catch (error) {
+      const err = error as ApiError;
+      showToast(err.message || "Failed to create vault", "error");
+      throw error;
+    }
+  };
+
+  const handleCreateLog = async (filename: string, vaultId: string) => {
+    if (!selectedSpace) return;
+    try {
+      await createLog(selectedSpace.id, vaultId, filename);
+      showToast("Log created successfully", "success");
+      onRefresh();
+      setInlineMode(null);
+    } catch (error) {
+      const err = error as ApiError;
+      showToast(err.message || "Failed to create log", "error");
+      throw error;
+    }
+  };
+
+  const handleRename = async (name: string, node: TreeNode) => {
+    try {
+      if (node.type === "vault") {
+        await updateVault(node.id, name);
+        showToast("Vault renamed successfully", "success");
+      } else if (node.type === "log") {
+        await updateLog(node.id, { name });
+        showToast("Log renamed successfully", "success");
+      }
+      onRefresh();
+      setInlineMode(null);
+    } catch (error) {
+      const err = error as ApiError;
+      showToast(err.message || "Failed to rename", "error");
+      throw error;
+    }
+  };
+
+  const handleDelete = async (node: TreeNode) => {
+    try {
+      if (node.type === "vault") {
+        await deleteVault(node.id);
+        showToast("Vault deleted successfully", "success");
+      } else if (node.type === "log") {
+        await deleteLogAPI(node.id);
+        showToast("Log deleted successfully", "success");
+      }
+      onRefresh();
+    } catch (error) {
+      const err = error as ApiError;
+      showToast(err.message || "Failed to delete", "error");
+    }
+  };
+
+  // Context menu
   const handleContextMenu = (e: React.MouseEvent, node: TreeNode) => {
     e.preventDefault();
     e.stopPropagation();
@@ -49,110 +157,26 @@ export default function ExplorerSidebar({
     setContextMenu(null);
   };
 
-  const handleNewSpace = async () => {
-    const name = prompt("Enter space name:");
-    if (!name) return;
-
-    try {
-      await createSpace(name);
-      onSpacesChange();
-    } catch (error) {
-      alert("Failed to create space");
-    }
-  };
-
-  const handleNewVault = async (parentNode?: TreeNode) => {
-    if (!selectedSpace) return;
-
-    const name = prompt("Enter vault name:");
-    if (!name) return;
-
-    try {
-      const parentId = parentNode?.type === "vault" ? parentNode.id : undefined;
-      await createVault(selectedSpace.id, name, parentId);
-      onRefresh();
-    } catch (error) {
-      alert("Failed to create vault");
-    }
-    closeContextMenu();
-  };
-
-  const handleNewLog = async (vaultNode?: TreeNode) => {
-    if (!selectedSpace) return;
-
-    const filename = prompt("Enter filename (e.g., app.js, main.py):");
-    if (!filename) return;
-
-    try {
-      const vaultId = vaultNode?.type === "vault" ? vaultNode.id : undefined;
-      if (!vaultId) {
-        alert("Please create a vault first");
-        return;
-      }
-      await createLog(selectedSpace.id, vaultId, filename);
-      onRefresh();
-    } catch (error) {
-      alert("Failed to create log");
-    }
-    closeContextMenu();
-  };
-
-  const handleRename = async () => {
-    if (!contextMenu?.node) return;
-
-    const node = contextMenu.node;
-    const newNameValue = prompt(`Rename ${node.name}:`, node.name);
-    if (!newNameValue || newNameValue === node.name) {
-      closeContextMenu();
-      return;
-    }
-
-    try {
-      if (node.type === "vault") {
-        await updateVault(node.id, newNameValue);
-      } else if (node.type === "log") {
-        await updateLog(node.id, { name: newNameValue });
-      }
-      onRefresh();
-    } catch (error) {
-      alert("Failed to rename");
-    }
-    closeContextMenu();
-  };
-
-  const handleDelete = async () => {
-    if (!contextMenu?.node) return;
-
-    const node = contextMenu.node;
-    if (!confirm(`Delete ${node.name}?`)) {
-      closeContextMenu();
-      return;
-    }
-
-    try {
-      if (node.type === "vault") {
-        await deleteVault(node.id);
-      } else if (node.type === "log") {
-        await deleteLogAPI(node.id);
-      }
-      onRefresh();
-    } catch (error) {
-      alert("Failed to delete");
-    }
-    closeContextMenu();
-  };
-
-  const handleDuplicate = async () => {
-    if (!contextMenu?.node || contextMenu.node.type !== "log") return;
-    // Not implemented in backend yet
-    alert("Duplicate feature coming soon");
-    closeContextMenu();
-  };
-
+  // Render tree nodes
   const renderNode = (node: TreeNode, depth: number = 0) => {
     const isExpanded = expanded.has(node.id);
     const isVault = node.type === "vault";
     const isLog = node.type === "log";
+
+    // Show inline rename input for this node
+    if (inlineMode?.type === "rename" && inlineMode.node.id === node.id) {
+      return (
+        <div key={node.id} style={{ paddingLeft: `${depth * 16 + 8}px` }}>
+          <InlineNameInput
+            initial={node.name}
+            placeholder={isVault ? "Vault name" : "Filename"}
+            onSubmit={(name) => handleRename(name, node)}
+            onCancel={() => setInlineMode(null)}
+            validate={isVault ? validateSpaceOrVaultName : validateLogFilename}
+          />
+        </div>
+      );
+    }
 
     return (
       <div key={node.id}>
@@ -188,14 +212,43 @@ export default function ExplorerSidebar({
             <MoreVertical size={14} />
           </button>
         </div>
-        {isVault && isExpanded && node.children && (
+
+        {/* Children and inline create inputs */}
+        {isVault && isExpanded && (
           <div>
-            {node.children.length === 0 ? (
-              <div className="text-sm text-muted px-2 py-2" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
-                This Vault has no Logs.
+            {/* Show inline create vault input */}
+            {inlineMode?.type === "create-vault" && inlineMode.parentId === node.id && (
+              <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+                <InlineNameInput
+                  placeholder="Vault name"
+                  onSubmit={(name) => handleCreateVault(name, node.id)}
+                  onCancel={() => setInlineMode(null)}
+                  validate={validateSpaceOrVaultName}
+                />
               </div>
-            ) : (
+            )}
+
+            {/* Show inline create log input */}
+            {inlineMode?.type === "create-log" && inlineMode.vaultId === node.id && (
+              <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+                <InlineNameInput
+                  placeholder="filename.ext"
+                  onSubmit={(name) => handleCreateLog(name, node.id)}
+                  onCancel={() => setInlineMode(null)}
+                  validate={validateLogFilename}
+                />
+              </div>
+            )}
+
+            {/* Render children */}
+            {node.children && node.children.length > 0 ? (
               node.children.map((child) => renderNode(child, depth + 1))
+            ) : (
+              !inlineMode && (
+                <div className="text-sm text-muted px-2 py-2" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+                  No files yet
+                </div>
+              )
             )}
           </div>
         )}
@@ -211,92 +264,127 @@ export default function ExplorerSidebar({
       <div className="px-4 py-3 border-b border-white/10">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-white">Space</h2>
-          <button
-            onClick={handleNewSpace}
-            className="text-muted hover:text-white"
-            title="New Space"
-            aria-label="New Space"
-          >
-            <Plus size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setInlineMode({ type: "create-space" })}
+              className="text-muted hover:text-white"
+              title="New Space"
+              aria-label="New Space"
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              onClick={onOpenCommandPalette}
+              className="text-muted hover:text-white"
+              title="Command Palette (Ctrl+Shift+P)"
+              aria-label="Command Palette"
+            >
+              <MoreVertical size={16} />
+            </button>
+          </div>
         </div>
-        <select
-          value={selectedSpace?.id || ""}
-          onChange={(e) => {
-            const space = spaces.find((s) => s.id === e.target.value);
-            if (space) onSelectSpace(space);
-          }}
-          className="w-full bg-black border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-primaryBlue"
-        >
-          {spaces.map((space) => (
-            <option key={space.id} value={space.id}>
-              {space.name}
-            </option>
-          ))}
-        </select>
+
+        {/* Inline create space */}
+        {inlineMode?.type === "create-space" ? (
+          <InlineNameInput
+            placeholder="Space name"
+            onSubmit={handleCreateSpace}
+            onCancel={() => setInlineMode(null)}
+            validate={validateSpaceOrVaultName}
+          />
+        ) : (
+          <select
+            value={selectedSpace?.id || ""}
+            onChange={(e) => {
+              const space = spaces.find((s) => s.id === e.target.value);
+              if (space) onSelectSpace(space);
+            }}
+            className="w-full bg-black border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-primaryBlue"
+          >
+            {spaces.map((space) => (
+              <option key={space.id} value={space.id}>
+                {space.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Tree */}
       <div className="flex-1 overflow-auto p-2">
-        {isEmpty ? (
+        {isEmpty && !inlineMode ? (
           <div className="text-center py-8 px-4">
             <p className="text-sm text-muted mb-3">No Vaults yet.</p>
             <button
-              onClick={() => handleNewVault()}
+              onClick={() => setInlineMode({ type: "create-vault" })}
               className="text-sm text-primaryBlue hover:underline"
             >
               Create Vault
             </button>
           </div>
         ) : (
-          tree.map((node) => renderNode(node))
+          <>
+            {/* Root-level create vault input */}
+            {inlineMode?.type === "create-vault" && !inlineMode.parentId && (
+              <div className="px-2">
+                <InlineNameInput
+                  placeholder="Vault name"
+                  onSubmit={(name) => handleCreateVault(name)}
+                  onCancel={() => setInlineMode(null)}
+                  validate={validateSpaceOrVaultName}
+                />
+              </div>
+            )}
+            {tree.map((node) => renderNode(node))}
+          </>
         )}
       </div>
 
       {/* Context Menu */}
       {contextMenu && (
         <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={closeContextMenu}
-          />
+          <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
           <div
             className="fixed z-50 bg-card border border-white/10 rounded-lg shadow-lg py-1 min-w-[160px]"
             style={{ top: contextMenu.y, left: contextMenu.x }}
           >
-            {contextMenu.node?.type === "vault" && (
+            {contextMenu.node.type === "vault" && (
               <>
                 <button
-                  onClick={() => handleNewLog(contextMenu.node!)}
+                  onClick={() => {
+                    setInlineMode({ type: "create-log", vaultId: contextMenu.node.id });
+                    closeContextMenu();
+                  }}
                   className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/5"
                 >
                   New Log
                 </button>
                 <button
-                  onClick={() => handleNewVault(contextMenu.node!)}
+                  onClick={() => {
+                    setInlineMode({ type: "create-vault", parentId: contextMenu.node.id });
+                    closeContextMenu();
+                  }}
                   className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/5"
                 >
                   New Vault
                 </button>
               </>
             )}
-            {contextMenu.node?.type === "log" && (
-              <button
-                onClick={handleDuplicate}
-                className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/5"
-              >
-                Duplicate
-              </button>
-            )}
             <hr className="my-1 border-white/10" />
             <button
-              onClick={handleRename}
+              onClick={() => {
+                setInlineMode({ type: "rename", node: contextMenu.node });
+                closeContextMenu();
+              }}
               className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/5"
             >
               Rename
             </button>
             <button
-              onClick={handleDelete}
+              onClick={() => {
+                handleDelete(contextMenu.node);
+                closeContextMenu();
+              }}
               className="w-full px-4 py-2 text-left text-sm text-accentCyan hover:bg-white/5"
             >
               Delete
