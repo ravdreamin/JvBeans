@@ -114,7 +114,7 @@ export default function FlowPage() {
     }
   };
 
-  // UPDATED: AI Generate with proper error handling for API keys
+  // UPDATED: AI Generate - code-only output with filename context
   const handleGenerate = async () => {
     if (!selectedLog && !showGenerateInput) {
       setShowGenerateInput(true);
@@ -131,15 +131,27 @@ export default function FlowPage() {
     setShowGenerateInput(false);
     try {
       const language = selectedLog ? getLanguageFromExtension(selectedLog.name) : undefined;
-      const result = await generateCode(prompt, language);
+      const filename = selectedLog?.name || "untitled.txt";
+
+      // UPDATED: Pass filename for better language context
+      const result = await generateCode(prompt, language, filename);
+
+      // UPDATED: Check if generation returned empty
+      if (!result.code || result.code.trim() === "") {
+        showToast("Generation returned empty output.", "error");
+        setGeneratePrompt("");
+        return;
+      }
+
+      // UPDATED: Insert code directly (backend ensures code-only)
       setCode(result.code);
       showToast("Code generated successfully", "success");
       setGeneratePrompt("");
     } catch (error) {
       const err = error as ApiError;
 
-      // UPDATED: Check for API key errors and show non-blocking toast
-      if (err.code === "API_KEY_INVALID" || err.message?.includes("API key")) {
+      // UPDATED: Handle specific error codes
+      if (err.code === "API_KEY_INVALID" || err.code === "PROVIDER_UNAVAILABLE" || err.message?.includes("API key")) {
         showToast(
           "AI provider not configured. Add OpenAI or Gemini API keys in backend .env to enable generation.",
           "error"
@@ -334,7 +346,7 @@ export default function FlowPage() {
         />
 
         {/* Editor */}
-        <div className="flex-1 border-r border-white/10 relative">
+        <div className="flex-1 border-r border-gray-200 relative bg-white">
           {selectedLog ? (
             <>
               <Editor
@@ -342,7 +354,7 @@ export default function FlowPage() {
                 language={language}
                 value={code}
                 onChange={(value) => setCode(value || "")}
-                theme="vs-dark"
+                theme="vs"
                 options={{
                   minimap: { enabled: false },
                   fontSize: 14,

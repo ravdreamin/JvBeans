@@ -137,7 +137,8 @@ export const runCode = async (language: string, code: string): Promise<RunResult
 };
 
 // AI Generate
-export const generateCode = async (prompt: string, language?: string): Promise<GenerateResponse> => {
-  const { data } = await api.post("/api/ai/generate", { prompt, language });
+// UPDATED: Added filename parameter for better language context
+export const generateCode = async (prompt: string, language?: string, filename?: string): Promise<GenerateResponse> => {
+  const { data } = await api.post("/api/ai/generate", { prompt, language, filename });
   return data;
 };
