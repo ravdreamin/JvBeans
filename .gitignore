@@ -4,3 +4,7 @@
 *.env
 frontend/.env.local
 Backend/.env
+.env.example
+
+# local db
+Backend/jvbeans.db
