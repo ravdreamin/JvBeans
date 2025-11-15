@@ -1,4 +1,3 @@
-
 # env
 .env
 *.env
@@ -9,8 +8,6 @@ Backend/.env
 # local db
 Backend/jvbeans.db
 
-# env
-.env
-*.env
-frontend/.env.local
-Backend/.env
+# macOS
+.DS_Store
+**/.DS_Store
